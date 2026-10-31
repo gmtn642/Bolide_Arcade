@@ -33,11 +33,16 @@ Les trois circuits figurent au calendrier 2026. Leurs tracés sont reconnaissabl
 - **Pilote** : freinage aidé seulement en cas de grosse erreur.
 - **Champion** : aucune aide, adversaires rapides.
 
-## Conseils iPhone et Android
+## Écran fixe en paysage, plein écran, pas de zoom
 
+- **Le jeu s'affiche toujours en paysage**. Si le téléphone passe en portrait (trop braqué, ou rotation verrouillée), l'image pivote d'elle-même pour rester alignée.
+- **iPhone** : Safari ne laisse pas un site bloquer la rotation. Il faut activer le **cadenas de rotation** dans le Centre de contrôle : l'écran ne pivote plus du tout, et le jeu reste en paysage.
+- **iPad** : tenir l'iPad à l'horizontale, puis activer le verrouillage de la rotation (Centre de contrôle).
+- **Android** : le jeu passe en plein écran et verrouille le paysage tout seul au lancement.
+- **Plein écran sur iPhone/iPad** : Safari, bouton Partager, puis « Sur l'écran d'accueil ». On lance ensuite le jeu depuis l'icône, sans barre Safari.
+- **Zoom** : le pincement, le double-tap et le zoom automatique de la saisie du prénom sont bloqués.
 - Au premier lancement, l'iPhone demande l'accès aux « mouvements et orientation » : il faut répondre **Autoriser**.
-- Pour jouer en plein écran : Safari, bouton Partager, puis « Sur l'écran d'accueil ».
-- Le son passe par le haut-parleur du téléphone. Sur iPhone, il faut désactiver le mode silencieux.
+- Sur iPhone, le son est coupé si le mode silencieux est activé.
 
 ## Technique
 

@@ -14,6 +14,9 @@ const params = new URLSearchParams(location.search);
 const TEST = params.has('test');
 const AUTO = params.has('auto');
 const isTouch = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+const isIOS = /iP(hone|od|ad)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isIPhone = /iPhone|iPod/.test(navigator.userAgent);
+const isStandalone = navigator.standalone === true || window.matchMedia('(display-mode: standalone)').matches || window.matchMedia('(display-mode: fullscreen)').matches;
 
 // ---------------------------------------------------------------------
 //  Réglages
@@ -80,40 +83,99 @@ const mirrorCams = MIRRORS.map((m, i) => {
   return c;
 });
 
-// Paysage forcé : si le système bascule l'écran en portrait pendant la
-// partie (téléphone trop incliné en tournant le "volant"), on fait pivoter
-// le jeu en CSS pour qu'il reste aligné avec le téléphone.
+// Paysage verrouillé (logiciel). Sur iPhone/iPad, une page web ne peut pas
+// bloquer la rotation de l'écran. Si le système passe en portrait (téléphone
+// trop incliné en braquant, ou cadenas de rotation portrait activé), on fait
+// pivoter tout le jeu en CSS pour qu'il reste en paysage, aligné sur le
+// téléphone. Avec le cadenas de rotation de l'iPhone, l'écran ne bouge plus.
 const app = $('app');
-let baseAngle = 90, forcedRot = 0;
+let baseAngle = 90, forcedRot = 0, seenLandscape = false, rotTipShown = false;
+function isLandscapeNow() {
+  const t = screen.orientation && screen.orientation.type;
+  if (t) return t.indexOf('landscape') === 0;
+  if (typeof window.orientation === 'number') return Math.abs(window.orientation) === 90;
+  return window.matchMedia('(orientation: landscape)').matches;
+}
 function viewSize() { return forcedRot % 180 !== 0 ? [window.innerHeight, window.innerWidth] : [window.innerWidth, window.innerHeight]; }
 function updateRotation() {
   let rot = 0;
-  if (isTouch && G && G.state !== 'menu') {
+  if (isTouch) {
     const cur = screenAngle();
-    if (cur === 90 || cur === 270) baseAngle = cur;
-    else rot = ((baseAngle - cur) % 360 + 360) % 360;
+    if (isLandscapeNow()) { baseAngle = cur; seenLandscape = true; }
+    else {
+      if (!seenLandscape) baseAngle = (cur + 90) % 360;
+      rot = ((baseAngle - cur) % 360 + 360) % 360;
+    }
   }
   if (rot !== forcedRot) {
+    const wasFree = forcedRot === 0;
     forcedRot = rot;
+    app.classList.toggle('rot90', rot === 90);
+    app.classList.toggle('rot270', rot === 270);
     if (!rot) app.style.cssText = '';
-    else {
-      const w = window.innerHeight, h = window.innerWidth;
-      app.style.cssText = `left:${(window.innerWidth - w) / 2}px;top:${(window.innerHeight - h) / 2}px;width:${w}px;height:${h}px;right:auto;bottom:auto;transform:rotate(${rot}deg);`;
+    if (rot && wasFree && seenLandscape && !rotTipShown && G && (G.state === 'quali' || G.state === 'race')) {
+      rotTipShown = true;
+      setTimeout(() => toast(isIOS ? 'Astuce : active le cadenas de rotation 🔒 (Centre de contrôle)' : 'Astuce : désactive la rotation automatique de l’écran', 4500), 300);
     }
+  }
+  if (rot) {
+    const w = window.innerHeight, h = window.innerWidth;
+    app.style.cssText = `left:${(window.innerWidth - w) / 2}px;top:${(window.innerHeight - h) / 2}px;width:${w}px;height:${h}px;right:auto;bottom:auto;transform:rotate(${rot}deg);`;
   }
 }
 function resize() {
   updateRotation();
   const [w, h] = viewSize();
-  if (forcedRot) app.style.left = ((window.innerWidth - w) / 2) + 'px', app.style.top = ((window.innerHeight - h) / 2) + 'px', app.style.width = w + 'px', app.style.height = h + 'px';
+  document.body.classList.toggle('narrow', w < h);
   renderer.setSize(w, h, false);
   canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
   for (const c of [mainCam, cockCam]) { c.aspect = w / h; c.updateProjectionMatrix(); }
   if (preview) { preview.cam.aspect = w / h; preview.cam.updateProjectionMatrix(); }
 }
 window.addEventListener('resize', resize);
-window.addEventListener('orientationchange', () => setTimeout(resize, 250));
-if (screen.orientation && screen.orientation.addEventListener) screen.orientation.addEventListener('change', () => setTimeout(resize, 50));
+window.addEventListener('orientationchange', () => { resize(); setTimeout(resize, 300); });
+if (screen.orientation && screen.orientation.addEventListener) screen.orientation.addEventListener('change', () => { resize(); setTimeout(resize, 120); });
+if (window.visualViewport) window.visualViewport.addEventListener('resize', () => { if (window.visualViewport.scale > 1.01) resetZoom(); });
+
+// Plein écran (Android, iPad) + verrouillage paysage quand le navigateur l'accepte
+function goFullscreen() {
+  if (!isTouch) return Promise.resolve();
+  const el = document.documentElement;
+  const req = el.requestFullscreen || el.webkitRequestFullscreen;
+  const inFs = document.fullscreenElement || document.webkitFullscreenElement;
+  let p = Promise.resolve();
+  if (req && !inFs) { try { p = Promise.resolve(req.call(el, { navigationUI: 'hide' })).catch(() => {}); } catch (e) { /* refusé */ } }
+  return p.then(() => {
+    try { if (screen.orientation && screen.orientation.lock) return screen.orientation.lock('landscape').catch(() => {}); } catch (e) { /* non pris en charge */ }
+    return null;
+  });
+}
+document.addEventListener('pointerup', function firstTouch(e) {
+  if (e.target && e.target.closest && e.target.closest('input')) return;
+  document.removeEventListener('pointerup', firstTouch);
+  goFullscreen();
+});
+
+// Aucun zoom possible : pincement, double-tap, molette, saisie
+const vpMeta = document.querySelector('meta[name=viewport]');
+const VP = vpMeta ? vpMeta.getAttribute('content') : '';
+function resetZoom() {
+  if (!vpMeta) return;
+  vpMeta.setAttribute('content', VP.replace('maximum-scale=1', 'maximum-scale=1.0'));
+  setTimeout(() => vpMeta.setAttribute('content', VP), 60);
+}
+['gesturestart', 'gesturechange', 'gestureend'].forEach(t => document.addEventListener(t, (e) => e.preventDefault(), { passive: false }));
+document.addEventListener('touchmove', (e) => { if (e.touches.length > 1 || (e.scale && e.scale !== 1)) e.preventDefault(); }, { passive: false });
+let lastTap = { t: 0, x: 0, y: 0 };
+document.addEventListener('touchend', (e) => {
+  const tch = e.changedTouches && e.changedTouches[0]; if (!tch) return;
+  const now = performance.now();
+  if (now - lastTap.t < 350 && Math.hypot(tch.clientX - lastTap.x, tch.clientY - lastTap.y) < 40 && !(e.target.closest && e.target.closest('input'))) e.preventDefault();
+  lastTap = { t: now, x: tch.clientX, y: tch.clientY };
+}, { passive: false });
+document.addEventListener('dblclick', (e) => e.preventDefault(), { passive: false });
+window.addEventListener('wheel', (e) => { if (e.ctrlKey) e.preventDefault(); }, { passive: false });
+window.addEventListener('keydown', (e) => { if ((e.ctrlKey || e.metaKey) && ['+', '-', '=', '0'].includes(e.key)) e.preventDefault(); });
 
 // ---------------------------------------------------------------------
 //  Circuits (construits une fois)
@@ -162,7 +224,7 @@ function screenAngle() {
 function onMotion(e) {
   const a = e.accelerationIncludingGravity;
   if (!a || a.x == null) return;
-  const ang = (isTouch && G.state !== 'menu' ? baseAngle : screenAngle()) * Math.PI / 180;
+  const ang = (isTouch ? baseAngle : screenAngle()) * Math.PI / 180;
   const sx = a.x * Math.cos(ang) - a.y * Math.sin(ang);
   const sy = a.x * Math.sin(ang) + a.y * Math.cos(ang);
   const mag = Math.hypot(a.x, a.y, a.z || 0) || 1; // m/s² ou g selon l'appareil
@@ -944,7 +1006,8 @@ function setPreviewCar(livery) {
 function renderPreview(dt) {
   const pv = preview;
   pv.turn.rotation.y += dt * 0.45;
-  const wide = window.innerWidth > window.innerHeight;
+  const [vw, vh] = viewSize();
+  const wide = vw > vh;
   pv.cam.position.set(wide ? 4.2 : 0, 2.3, wide ? 8.6 : 11);
   pv.cam.lookAt(wide ? 2.6 : 0, 0.35, 0);
   renderer.setRenderTarget(null);
@@ -1005,6 +1068,13 @@ function buildMenu() {
     sb.appendChild(b);
   }
   $('name').value = settings.name;
+  const tips = $('tips');
+  if (isIOS) {
+    tips.innerHTML = isIPhone
+      ? '<b>🔒 Écran fixe</b> : active le cadenas de rotation (Centre de contrôle), le jeu reste en paysage.' + (isStandalone ? '' : '<br><b>Plein écran</b> : Partager <span class="sh">⬆</span> puis « Sur l’écran d’accueil ».')
+      : '<b>🔒 Écran fixe</b> : iPad à l’horizontale, puis verrouillage de la rotation (Centre de contrôle).' + (isStandalone ? '' : '<br><b>Plein écran</b> : Partager <span class="sh">⬆</span> puis « Sur l’écran d’accueil ».');
+    tips.classList.remove('hidden'); $('credit').classList.add('hidden');
+  }
   $('btnSound').textContent = settings.sound ? '🔊' : '🔇';
 }
 function hex(c) { return new THREE.Color(c).getHexString(); }
@@ -1021,24 +1091,15 @@ function drawThumb(cv, T, sel) {
   g.closePath(); g.stroke();
 }
 $('name').addEventListener('input', (e) => { settings.name = e.target.value.replace(/[<>]/g, '').slice(0, 12); store.set('name', settings.name); });
+$('name').addEventListener('blur', () => { resetZoom(); window.scrollTo(0, 0); setTimeout(resize, 150); });
 $('btnSound').onclick = () => { settings.sound = !settings.sound; store.set('sound', settings.sound); sound.setEnabled(settings.sound); $('btnSound').textContent = settings.sound ? '🔊' : '🔇'; };
 
 async function onStart() {
   sound.init(); sound.setEnabled(settings.sound);
   // l'autorisation du capteur doit être demandée immédiatement (geste utilisateur, iOS)
   const tiltP = settings.steerMode === 'tilt' ? enableTilt() : Promise.resolve(true);
-  let fsP = Promise.resolve();
-  if (isTouch) {
-    const el = document.documentElement;
-    if (el.requestFullscreen && !document.fullscreenElement) {
-      fsP = el.requestFullscreen({ navigationUI: 'hide' })
-        .then(() => (screen.orientation && screen.orientation.lock) ? screen.orientation.lock('landscape') : null)
-        .catch(() => {});
-    }
-    try { if (navigator.wakeLock) navigator.wakeLock.request('screen').then(w => { G.wake = w; }).catch(() => {}); } catch (e) { /* rien */ }
-    const cur = screenAngle();
-    baseAngle = (cur === 90 || cur === 270) ? cur : 90;
-  }
+  const fsP = goFullscreen();
+  if (isTouch) { try { if (navigator.wakeLock) navigator.wakeLock.request('screen').then(w => { G.wake = w; }).catch(() => {}); } catch (e) { /* rien */ } }
   const ok = await tiltP;
   await fsP;
   if (settings.steerMode === 'tilt') {
@@ -1057,8 +1118,8 @@ async function onStart() {
   else if (settings.steerMode === 'keys') toast('← → pour tourner · ↑ accélérer · ↓ freiner', 3500);
 }
 $('btnStart').onclick = onStart;
-$('btnRace').onclick = goRace;
-$('btnAgain').onclick = () => { show('raceRes', false); startQualiAgain(); };
+$('btnRace').onclick = () => { goFullscreen(); goRace(); };
+$('btnAgain').onclick = () => { goFullscreen(); show('raceRes', false); startQualiAgain(); };
 $('btnMenu').onclick = () => { show('raceRes', false); toMenu(); };
 function startQualiAgain() { for (const c of G.cars) if (!c.isPlayer) c.qTime = simulateLapTime(G.T, c.k) * (1 + (Math.random() - 0.5) * 0.012); show('hud'); startQuali(); }
 function toMenu() {
